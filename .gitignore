@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# dotenv
+.env
+
+# Telethon session files
+*.session
+
+# Output
+ChannelIds.txt
+
+# macOS
+.DS_Store
+
+# Editor files
+.vscode/
+*.swp
