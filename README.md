@@ -14,6 +14,33 @@ API_ID=123456
 API_HASH=your_api_hash_here
 SESSION_NAME=signals_session
 
+Channel configuration (private channels)
+--------------------------------------
+If the channel is private or the username can't be resolved, prefer using the numeric
+channel id and its access hash. You can obtain both by running `GetChannelId.py`.
+
+Example `.env` entries:
+
+CHANNEL_ID=1144215308
+CHANNEL_ACCESS_HASH=7450773130669315489
+
+Alternatively you can still set `CHANNEL_USERNAME` to a public username (without the @).
+The client now supports three ways (priority order):
+1. `CHANNEL_ID` + `CHANNEL_ACCESS_HASH` (recommended for private channels)
+2. `CHANNEL_USERNAME` as a numeric id (e.g. `1144215308`) or username (e.g. `mychannel`)
+3. `CHANNEL_USERNAME` in `access_hash#id` or `id#access_hash` format (not recommended — prefer explicit env vars)
+
+How to get the id & access hash
+------------------------------
+Run the dialog lister we included:
+
+```bash
+python3 GetChannelId.py
+```
+
+Look for your channel by name and copy the `ID` and `Access Hash` fields. Put them in
+`CHANNEL_ID` and `CHANNEL_ACCESS_HASH` respectively.
+
 Install dependencies (in a Python venv):
 
 python -m pip install -r requirements.txt
