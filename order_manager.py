@@ -11,6 +11,26 @@ CTRADER_TOKEN = os.getenv("CTRADER_TOKEN")           # OAuth2 token
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes")
 TRADING_BACKEND = os.getenv("TRADING_BACKEND", "ctrader").lower()  # 'ctrader' or 'mt5'
 
+
+def backend_available() -> bool:
+    """Check whether the configured trading backend appears available.
+
+    - For 'ctrader' we check that BROKER_REST_URL and CTRADER_TOKEN are set.
+    - For 'mt5' we try to import the MetaTrader5 package (actual terminal availability
+      cannot be fully checked here).
+    Returns True if backend looks usable, False otherwise.
+    """
+    backend = TRADING_BACKEND
+    if backend == 'ctrader':
+        return bool(BROKER_REST_URL and CTRADER_TOKEN)
+    if backend == 'mt5':
+        try:
+            import MetaTrader5  # type: ignore
+            return True
+        except Exception:
+            return False
+    return False
+
 def decide_order(parsed: dict) -> dict:
     """Convert parsed data into executable order details."""
     if not parsed.get('symbol'):

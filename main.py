@@ -5,9 +5,11 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.types import InputPeerChannel
 import time
+from logging.handlers import RotatingFileHandler
 from signal_parser import parse_signal
-from order_manager import decide_order, place_order
+from order_manager import decide_order, place_order, backend_available, TRADING_BACKEND
 
+# Validate API credentials
 load_dotenv()
 # Validate API credentials
 SESSION_NAME = os.getenv("SESSION_NAME", "signals_session")
@@ -24,6 +26,14 @@ except ValueError:
     raise SystemExit(f"API_ID must be an integer, got: {api_id_raw!r}")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+# Add rotating file handler for persistent logs
+LOG_FILE = os.path.join(os.path.dirname(__file__), 'bot.log')
+rot_handler = RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
+rot_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
+logging.getLogger().addHandler(rot_handler)
+
+HEALTH_FILE = os.path.join(os.path.dirname(__file__), 'health.txt')
+
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
 async def handle_new_message(event):
@@ -40,11 +50,25 @@ async def handle_new_message(event):
         order = decide_order(parsed)
         result = place_order(order)
         logging.info("🚀 Order sent: %s", result)
+        # update health file on successful processing
+        try:
+            with open(HEALTH_FILE, 'w', encoding='utf-8') as hf:
+                hf.write(f"last_message={int(time.time())}\nsymbol={parsed.get('symbol')}\n")
+        except Exception:
+            pass
     except Exception as e:
         logging.exception("Error while handling message: %s", e)
 
 def main():
     logging.info("Listening to Telegram channel %s", CHANNEL)
+    # Check backend availability early and warn/exit if necessary
+    backend = TRADING_BACKEND
+    if backend == 'mt5' and not backend_available():
+        logging.error("TRADING_BACKEND=mt5 but MetaTrader5 package is not available. Either install MetaTrader5 or set TRADING_BACKEND=ctrader.")
+        return
+    if backend == 'ctrader' and not backend_available():
+        logging.warning("TRADING_BACKEND=ctrader but CTRADER credentials (BROKER_REST_URL/CTRADER_TOKEN) are missing. The bot will run in DRY_RUN mode or fail on order placement.")
+
     client.start()
 
     # Resolve CHANNEL to an entity before registering the handler so Telethon
@@ -138,6 +162,13 @@ def main():
                 client.disconnect()
             except Exception:
                 pass
+            # update health file with error timestamp and backoff
+            try:
+                with open(HEALTH_FILE, 'w', encoding='utf-8') as hf:
+                    hf.write(f"last_error={int(time.time())}\nbackoff={backoff}\n")
+            except Exception:
+                pass
+
             logging.info("Reconnecting after %s seconds...", backoff)
             time.sleep(backoff)
             backoff = min(max_backoff, backoff * 2)
