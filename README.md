@@ -41,6 +41,23 @@ python3 GetChannelId.py
 Look for your channel by name and copy the `ID` and `Access Hash` fields. Put them in
 `CHANNEL_ID` and `CHANNEL_ACCESS_HASH` respectively.
 
+Trading backend selection
+-------------------------
+You can choose which trading backend to use with the `TRADING_BACKEND` env var. Supported values:
+
+- `ctrader` (default) — uses the cTrader REST API configured with `BROKER_REST_URL` and `CTRADER_TOKEN`.
+- `mt5` — uses the MetaTrader5 Python API. This requires the `MetaTrader5` Python package and a running MT5 terminal (usually Windows).
+
+Example:
+
+```
+TRADING_BACKEND=ctrader
+# or
+TRADING_BACKEND=mt5
+```
+
+If you set `TRADING_BACKEND=mt5` on macOS, the MT5 package/terminal may not be available — in that case use `ctrader` or run the code on a Windows machine with MT5 installed.
+
 Install dependencies (in a Python venv):
 
 python -m pip install -r requirements.txt

@@ -43,4 +43,9 @@ def parse_signal(text: str) -> dict:
     m = re.search(r'(\d+)\s*pip', t, re.I)
     if m: res['pip_count'] = int(m.group(1))
     
+    # detect side (Buy/Sell) if present in text
+    m = re.search(r'\b(Buy|Sell)\b', t, re.I)
+    if m:
+        res['side'] = m.group(1).lower()
+
     return res

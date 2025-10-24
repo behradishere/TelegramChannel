@@ -6,7 +6,7 @@ from telethon import TelegramClient, events
 from telethon.tl.types import InputPeerChannel
 import time
 from signal_parser import parse_signal
-from order_manager import decide_order, place_order_ctrader
+from order_manager import decide_order, place_order
 
 load_dotenv()
 # Validate API credentials
@@ -38,7 +38,7 @@ async def handle_new_message(event):
             logging.info("No recognizable symbol — skipping")
             return
         order = decide_order(parsed)
-        result = place_order_ctrader(order)
+        result = place_order(order)
         logging.info("🚀 Order sent: %s", result)
     except Exception as e:
         logging.exception("Error while handling message: %s", e)
