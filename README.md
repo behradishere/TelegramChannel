@@ -14,21 +14,34 @@ API_ID=123456
 API_HASH=your_api_hash_here
 SESSION_NAME=signals_session
 
-Channel configuration (private channels)
---------------------------------------
+Channel configuration (private channels) and multi-channel support
+----------------------------------------------------------------
 If the channel is private or the username can't be resolved, prefer using the numeric
 channel id and its access hash. You can obtain both by running `GetChannelId.py`.
 
-Example `.env` entries:
+Example `.env` entries (single private channel):
 
 CHANNEL_ID=1144215308
 CHANNEL_ACCESS_HASH=7450773130669315489
 
-Alternatively you can still set `CHANNEL_USERNAME` to a public username (without the @).
-The client now supports three ways (priority order):
-1. `CHANNEL_ID` + `CHANNEL_ACCESS_HASH` (recommended for private channels)
-2. `CHANNEL_USERNAME` as a numeric id (e.g. `1144215308`) or username (e.g. `mychannel`)
-3. `CHANNEL_USERNAME` in `access_hash#id` or `id#access_hash` format (not recommended — prefer explicit env vars)
+Multi-channel examples (configure multiple channels):
+
+# Using public usernames (without the @):
+CHANNELS=channelA,channelB,my_public_channel
+
+# Using numeric IDs:
+CHANNELS=1144215308,2237445566
+
+# Mixed: public + numeric + private (access_hash#id)
+CHANNELS=publicChannel,1144215308,3284937556#1144215308
+
+Priority and formats supported by the app (checked in order):
+1. `CHANNEL_ID` + `CHANNEL_ACCESS_HASH` (single explicit channel — highest priority)
+2. `CHANNELS` — comma-separated list; each entry may be:
+	- a username (e.g. `mychannel`)
+	- a numeric id (e.g. `1144215308`)
+	- `access_hash#channel_id` or `channel_id#access_hash` for private channels
+3. `CHANNEL_USERNAME` (legacy single-channel fallback)
 
 How to get the id & access hash
 ------------------------------
@@ -39,7 +52,7 @@ python3 GetChannelId.py
 ```
 
 Look for your channel by name and copy the `ID` and `Access Hash` fields. Put them in
-`CHANNEL_ID` and `CHANNEL_ACCESS_HASH` respectively.
+`CHANNEL_ID` and `CHANNEL_ACCESS_HASH` respectively, or add an `access_hash#id` entry to `CHANNELS`.
 
 Trading backend selection
 -------------------------

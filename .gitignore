@@ -23,3 +23,7 @@ ChannelIds.txt
 # Editor files
 .vscode/
 *.swp
+
+# Logs
+*.log
+health.txt
