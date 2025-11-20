@@ -118,7 +118,18 @@ class MT5Backend(TradingBackend):
             raise RuntimeError("MT5 backend not initialized")
 
         mt5 = self._mt5
-        symbol = order.symbol
+        
+        # Find the actual symbol name in MT5
+        actual_symbol = self.find_symbol(order.symbol)
+        if actual_symbol is None:
+            available = self.get_available_symbols()
+            raise ValueError(
+                f"Symbol {order.symbol} not found in MT5. "
+                f"Available symbols: {len(available)} total. "
+                f"Use get_available_symbols() to see all."
+            )
+        
+        symbol = actual_symbol
         volume = order.volume
 
         # Ensure symbol is available
@@ -322,14 +333,113 @@ class MT5Backend(TradingBackend):
             return None
 
         try:
-            tick = self._mt5.symbol_info_tick(symbol)
+            # Find the actual symbol name
+            actual_symbol = self.find_symbol(symbol)
+            if actual_symbol is None:
+                logger.error(f"Symbol {symbol} not found in MT5")
+                return None
+            
+            tick = self._mt5.symbol_info_tick(actual_symbol)
             if tick is None:
-                logger.error(f"Failed to get tick for {symbol}")
+                logger.error(f"Failed to get tick for {actual_symbol}")
                 return None
 
             return tick.bid
 
         except Exception as e:
             logger.error(f"Error getting price for {symbol}: {e}")
+            return None
+
+    def get_available_symbols(self) -> List[str]:
+        """
+        Get list of all available symbols in MT5.
+        
+        Returns:
+            List of symbol names
+        """
+        if not self._initialized or not self._mt5:
+            logger.warning("MT5 backend not initialized")
+            return []
+
+        try:
+            symbols = self._mt5.symbols_get()
+            if symbols is None:
+                logger.error("Failed to get symbols from MT5")
+                return []
+
+            symbol_names = [sym.name for sym in symbols]
+            logger.info(f"Found {len(symbol_names)} symbols in MT5")
+            return symbol_names
+
+        except Exception as e:
+            logger.error(f"Error getting symbols: {e}")
+            return []
+
+    def find_symbol(self, symbol: str) -> Optional[str]:
+        """
+        Find a symbol in MT5, trying various formats.
+        
+        Args:
+            symbol: Symbol to search for (e.g., 'XAUUSD', 'GOLD')
+            
+        Returns:
+            The actual symbol name in MT5, or None if not found
+        """
+        if not self._initialized or not self._mt5:
+            logger.warning("MT5 backend not initialized")
+            return None
+
+        try:
+            # First, try exact match
+            sym_info = self._mt5.symbol_info(symbol)
+            if sym_info is not None:
+                return symbol
+
+            # Get all available symbols
+            all_symbols = self.get_available_symbols()
+            
+            # Try case-insensitive match
+            symbol_upper = symbol.upper()
+            for sym in all_symbols:
+                if sym.upper() == symbol_upper:
+                    logger.info(f"Found symbol match: {symbol} -> {sym}")
+                    return sym
+            
+            # Try partial match (e.g., XAUUSD might be XAUUSD_o or XAUUSDm)
+            for sym in all_symbols:
+                if sym.upper().startswith(symbol_upper):
+                    logger.info(f"Found symbol with prefix: {symbol} -> {sym}")
+                    return sym
+            
+            # Try common broker-specific variations
+            variations = [
+                f"{symbol}_o",  # Common suffix for some brokers
+                f"{symbol}m",   # Mini lot
+                f"{symbol}.a",  # Suffix
+                f"{symbol}.b",
+                f"{symbol}.c",
+                f"#{symbol}",   # Some brokers use # for stocks
+                f"{symbol}i",   # Another common suffix
+            ]
+            
+            for variation in variations:
+                sym_info = self._mt5.symbol_info(variation)
+                if sym_info is not None:
+                    logger.info(f"Found symbol variation: {symbol} -> {variation}")
+                    return variation
+            
+            # Log available symbols that might be related
+            related = [s for s in all_symbols if symbol[:3].upper() in s.upper()]
+            if related:
+                logger.warning(
+                    f"Symbol '{symbol}' not found. Similar symbols available: {', '.join(related[:10])}"
+                )
+            else:
+                logger.error(f"Symbol '{symbol}' not found in MT5. No similar symbols found.")
+            
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding symbol {symbol}: {e}")
             return None
 
