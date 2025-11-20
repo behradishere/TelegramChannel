@@ -158,4 +158,5 @@ def place_order(order: dict):
     elif backend == 'ctrader':
         return place_order_ctrader(order)
     else:
+        raise ValueError(f"Unknown TRADING_BACKEND: {backend}. Use 'ctrader' or 'mt5'.")
         raise ValueError(f"Unknown TRADING_BACKEND: {backend}")
