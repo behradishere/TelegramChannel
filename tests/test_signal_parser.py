@@ -21,14 +21,14 @@ Sl : 4101.50        ( 80 pip )
 
 
 def test_parse_sample():
-    parsed = parse_signal(SAMPLE)
-    assert parsed['symbol'] == 'XAUUSD'
-    assert 'market_price' in parsed
-    assert parsed['buy_range'][0] == 4112 or parsed['buy_range'][1] == 4112
-    assert parsed['tp1'] == 4120
-    assert parsed['tp2'] == 4128
-    assert parsed['tp3'] == 4146
-    assert parsed['tp4'] is None
+    signal = parser.parse(SAMPLE)
+    assert signal.symbol == 'XAUUSD'
+    assert signal.market_price is not None
+    assert signal.buy_range[0] == 4107 or signal.buy_range[1] == 4112
+    assert signal.take_profits[0] == 4120
+    assert signal.take_profits[1] == 4128
+    assert signal.take_profits[2] == 4146
+    assert signal.take_profits[3] is None
     assert parsed['sl'] == 4101.50
     assert parsed['pip_count'] == 80
     assert parsed.get('side') == 'buy'

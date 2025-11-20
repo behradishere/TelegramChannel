@@ -1,0 +1,217 @@
+"""Main bot application orchestrator."""
+import asyncio
+from pathlib import Path
+
+from src.core.config import get_config
+from src.core.logging import setup_logging, get_logger
+from src.infrastructure.telegram.client import SignalTelegramClient
+from src.services.signal_parser import SignalParser
+from src.services.risk_manager import RiskManager
+from src.services.order_service import OrderService
+from src.services.trading_service import TradingService
+
+
+class SignalBot:
+    """
+    Main bot application that orchestrates all components.
+
+    Follows the dependency injection pattern for better testability.
+    """
+
+    def __init__(self):
+        """Initialize the signal bot."""
+        # Load configuration
+        self.config = get_config()
+
+        # Setup logging
+        setup_logging(self.config.logging)
+        self.logger = get_logger(__name__)
+
+        self.logger.info("=" * 60)
+        self.logger.info("Signal Bot Starting...")
+        self.logger.info("=" * 60)
+
+        # Initialize services
+        self.telegram_client = SignalTelegramClient(self.config.telegram)
+        self.signal_parser = SignalParser()
+        self.risk_manager = RiskManager(self.config.trading)
+        self.order_service = OrderService(self.config.trading, self.risk_manager)
+        self.trading_service = TradingService(self.config)
+
+        # Register message handler
+        self.telegram_client.on_message(self.handle_signal_message)
+
+        self.logger.info("All services initialized successfully")
+        self._update_health_status("starting")
+
+    async def start(self) -> None:
+        """Start the bot."""
+        try:
+            # Start Telegram client
+            await self.telegram_client.start()
+
+            # Get channels to monitor
+            channels = self.telegram_client.parse_channels_config()
+
+            if not channels:
+                self.logger.error("No channels configured. Please set CHANNEL_USERNAME, CHANNEL_ID, or CHANNELS in .env")
+                return
+
+            # Listen to channels
+            await self.telegram_client.listen_to_channels(channels)
+
+            # Update health status
+            self._update_health_status("running")
+
+            self.logger.info("Bot is now running and monitoring channels...")
+
+            # Run forever
+            await self.telegram_client.run_forever()
+
+        except KeyboardInterrupt:
+            self.logger.info("Received keyboard interrupt, shutting down...")
+        except Exception as e:
+            self.logger.error(f"Fatal error: {e}", exc_info=True)
+            self._update_health_status("error")
+            raise
+        finally:
+            await self.shutdown()
+
+    async def handle_signal_message(self, message_text: str, channel) -> None:
+        """
+        Handle incoming signal message from Telegram.
+
+        Args:
+            message_text: The message text content
+            channel: The channel entity the message came from
+        """
+        try:
+            self.logger.info(f"Processing message from {channel.title}...")
+
+            # Parse signal
+            signal = self.signal_parser.parse(message_text)
+
+            if not signal.is_valid():
+                self.logger.warning("Parsed signal is incomplete or invalid")
+                self.logger.debug(f"Signal data: {signal}")
+                return
+
+            self.logger.info(
+                f"Valid signal detected: {signal.symbol} {signal.side.value} "
+                f"@ {signal.get_entry_price()}"
+            )
+
+            # Create order from signal
+            order = self.order_service.create_order_from_signal(signal)
+
+            if not order:
+                self.logger.warning("Failed to create order from signal")
+                return
+
+            # Check if we should execute
+            if not self.order_service.should_execute_order(order):
+                self.logger.info("Order execution skipped (dry run or conditions not met)")
+                return
+
+            # Check if backend is available
+            if not self.trading_service.is_backend_available():
+                self.logger.warning(
+                    "Trading backend not available. Order not executed. "
+                    f"Backend: {self.config.trading.backend}, "
+                    f"Dry Run: {self.config.trading.dry_run}"
+                )
+                return
+
+            # Execute order
+            try:
+                result = self.trading_service.execute_order(order)
+                self.logger.info(f"Order executed successfully: {result}")
+
+                # Update account info for risk management
+                account_info = self.trading_service.get_account_info()
+                if account_info:
+                    self.risk_manager.update_account_balance(account_info.balance)
+
+            except Exception as e:
+                self.logger.error(f"Failed to execute order: {e}", exc_info=True)
+
+        except Exception as e:
+            self.logger.error(f"Error handling signal message: {e}", exc_info=True)
+
+    async def shutdown(self) -> None:
+        """Shutdown the bot gracefully."""
+        self.logger.info("Shutting down bot...")
+
+        try:
+            # Stop Telegram client
+            await self.telegram_client.stop()
+
+            # Shutdown trading service
+            self.trading_service.shutdown()
+
+            self._update_health_status("stopped")
+            self.logger.info("Bot shutdown complete")
+
+        except Exception as e:
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+    async def list_channels(self) -> None:
+        """List all available Telegram dialogs and exit."""
+        try:
+            await self.telegram_client.start()
+
+            self.logger.info("Fetching dialog list...")
+
+            # Save to config directory
+            output_file = Path("config/channels.json")
+            await self.telegram_client.list_dialogs(str(output_file))
+
+            self.logger.info(f"Channel list saved to {output_file}")
+
+            await self.telegram_client.stop()
+
+        except Exception as e:
+            self.logger.error(f"Error listing channels: {e}", exc_info=True)
+            raise
+
+    def _update_health_status(self, status: str) -> None:
+        """
+        Update health status file.
+
+        Args:
+            status: Current status (starting, running, stopped, error)
+        """
+        try:
+            health_file = Path(self.config.health_file)
+            health_file.parent.mkdir(parents=True, exist_ok=True)
+
+            import datetime
+            timestamp = datetime.datetime.now().isoformat()
+
+            with health_file.open('w') as f:
+                f.write(f"{status}|{timestamp}\n")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to update health status: {e}")
+
+
+async def main():
+    """Main entry point."""
+    bot = SignalBot()
+    await bot.start()
+
+
+async def list_channels_main():
+    """Entry point for listing channels."""
+    bot = SignalBot()
+    await bot.list_channels()
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--list-channels" in sys.argv:
+        asyncio.run(list_channels_main())
+    else:
+        asyncio.run(main())
+

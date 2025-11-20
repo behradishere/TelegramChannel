@@ -2,3 +2,8 @@ telethon>=1.24.0
 python-dotenv>=1.0.0
 pytest>=7.0.0
 requests>=2.31.0
+
+# Optional: MetaTrader5 backend support (Windows/Wine only)
+# Uncomment the line below if you want to use MT5 backend
+# MetaTrader5>=5.0.4300
+
