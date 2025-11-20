@@ -1,9 +1,11 @@
 """Main bot application orchestrator."""
 import asyncio
+import json
 from pathlib import Path
 
 from src.core.config import get_config
 from src.core.logging import setup_logging, get_logger
+from src.core.symbol_cache import get_symbol_cache
 from src.infrastructure.telegram.client import SignalTelegramClient
 from src.services.signal_parser import SignalParser
 from src.services.risk_manager import RiskManager
@@ -31,6 +33,9 @@ class SignalBot:
         self.logger.info("Signal Bot Starting...")
         self.logger.info("=" * 60)
 
+        # Load symbol cache for MT5 symbol details
+        self._load_symbol_cache()
+
         # Initialize services
         self.telegram_client = SignalTelegramClient(self.config.telegram)
         self.signal_parser = SignalParser()
@@ -44,6 +49,22 @@ class SignalBot:
         self.logger.info("All services initialized successfully")
         self._update_health_status("starting")
 
+    def _load_symbol_cache(self) -> None:
+        """Load symbol details cache for trading operations."""
+        symbol_cache = get_symbol_cache()
+        
+        config_file = Path("config/mt5_symbols_details.json")
+        if config_file.exists():
+            if symbol_cache.load():
+                self.logger.info("Symbol cache loaded successfully")
+            else:
+                self.logger.warning("Failed to load symbol cache, using defaults")
+        else:
+            self.logger.warning(
+                "Symbol details file not found. "
+                "Run export_symbols_details.py to generate it."
+            )
+
     async def start(self) -> None:
         """Start the bot."""
         try:
@@ -56,6 +77,9 @@ class SignalBot:
             if not channels:
                 self.logger.error("No channels configured. Please set CHANNEL_USERNAME, CHANNEL_ID, or CHANNELS in .env")
                 return
+
+            # Validate channels against generated channels.json if available
+            self._validate_channels(channels)
 
             # Listen to channels
             await self.telegram_client.listen_to_channels(channels)
@@ -76,6 +100,63 @@ class SignalBot:
             raise
         finally:
             await self.shutdown()
+
+    def _validate_channels(self, channels: list) -> None:
+        """
+        Validate configured channels against generated channels.json.
+        
+        Args:
+            channels: List of channel identifiers
+        """
+        channels_file = Path("config/channels.json")
+        if not channels_file.exists():
+            self.logger.warning("channels.json not found. Skipping validation.")
+            return
+        
+        try:
+            with open(channels_file, 'r', encoding='utf-8') as f:
+                available_channels = json.load(f)
+            
+            self.logger.info(f"Loaded {len(available_channels)} available channels from channels.json")
+            
+            # Build lookup for validation
+            channel_lookup = {
+                str(ch['id']): ch for ch in available_channels
+            }
+            username_lookup = {
+                ch['username']: ch for ch in available_channels 
+                if ch.get('username')
+            }
+            
+            # Validate each configured channel
+            for channel in channels:
+                channel_str = str(channel)
+                
+                # Check if it's a username
+                if isinstance(channel, str) and not channel.isdigit():
+                    if channel.replace('@', '') in username_lookup:
+                        ch_info = username_lookup[channel.replace('@', '')]
+                        self.logger.info(
+                            f"✓ Channel validated: {ch_info['name']} (@{ch_info['username']})"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"⚠ Channel username '{channel}' not found in channels.json"
+                        )
+                # Check if it's an ID
+                elif str(channel).lstrip('-').isdigit():
+                    if channel_str in channel_lookup:
+                        ch_info = channel_lookup[channel_str]
+                        self.logger.info(
+                            f"✓ Channel validated: {ch_info['name']} (ID: {ch_info['id']})"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"⚠ Channel ID '{channel}' not found in channels.json"
+                        )
+                        
+        except Exception as e:
+            self.logger.warning(f"Failed to validate channels: {e}")
 
     async def handle_signal_message(self, message_text: str, channel) -> None:
         """
