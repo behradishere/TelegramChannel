@@ -112,7 +112,15 @@ class SignalParser:
 
     def _extract_market_price(self, text: str) -> Optional[Decimal]:
         """Extract market price from text."""
+        # Try standard format first
         pattern = r'Market\s*price\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?)'
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+            return Decimal(match.group(1))
+
+        # Try Entry format (e.g., "Entry 🟰4057.749")
+        pattern = r'Entry\s*[🟰:\-]\s*([0-9]+(?:\.[0-9]+)?)'
         match = re.search(pattern, text, re.IGNORECASE)
 
         if match:
@@ -149,6 +157,7 @@ class SignalParser:
         take_profits = []
 
         for i in range(1, 5):
+            # Try standard format first (e.g., "Tp1: 2650.50")
             pattern = rf'Tp{i}[\s:\-]*([0-9]+(?:\.[0-9]+)?|open)'
             match = re.search(pattern, text, re.IGNORECASE)
 
@@ -159,14 +168,21 @@ class SignalParser:
                 else:
                     take_profits.append(Decimal(val))
             else:
-                take_profits.append(None)
+                # Try alternative format with emoji (e.g., "TP1 )🟰4069.117")
+                pattern = rf'TP{i}\s*\)?\s*[🟰:\-]\s*([0-9]+(?:\.[0-9]+)?)'
+                match = re.search(pattern, text, re.IGNORECASE)
+
+                if match:
+                    take_profits.append(Decimal(match.group(1)))
+                else:
+                    take_profits.append(None)
 
         return take_profits
 
     def _extract_stop_loss(self, text: str) -> Optional[Decimal]:
         """Extract stop loss from text."""
-        # Accept SL, SI, or S[I|L]
-        pattern = r'\bS[LI]\b\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?)'
+        # Accept SL, SI, or S[I|L] with optional emoji prefix
+        pattern = r'[✖️]?\s*\bS[LI]\b\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)'
         match = re.search(pattern, text, re.IGNORECASE)
 
         if match:
