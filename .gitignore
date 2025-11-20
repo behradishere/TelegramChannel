@@ -62,3 +62,48 @@ build/
 *.py[cod]
 __pycache__/
 
+# Python Artifacts
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+output.txt
+bot.log
+# Output files
+celerybeat-schedule
+celerybeat.pid
+# Celery
+instance/
+.webassets-cache
+# Flask
+scrapy.cfg
+.scrapy/
+# Scrapy
+docs/_build/
+# Sphinx documentation
+thumbs.db
+ehthumbs.db
+# Thumbnails
+desktop.ini
+# IDEs
+*.iml
+# IDE files
+.cache/
+# Cache
+.pyre/
+# Pyre type checker
+.mypy_cache/
+.dmypy.json
+# Mypy type checker
+.pytype/
+# Pytype type checker
+coverage/
+# Pytest cache
+.ipynb_checkpoints/
