@@ -11,6 +11,7 @@ from src.services.signal_parser import SignalParser
 from src.services.risk_manager import RiskManager
 from src.services.order_service import OrderService
 from src.services.trading_service import TradingService
+from src.services.position_manager import PositionManager
 
 
 class SignalBot:
@@ -42,6 +43,7 @@ class SignalBot:
         self.risk_manager = RiskManager(self.config.trading)
         self.order_service = OrderService(self.config.trading, self.risk_manager)
         self.trading_service = TradingService(self.config)
+        self.position_manager = PositionManager()
 
         # Register message handler
         self.telegram_client.on_message(self.handle_signal_message)
@@ -208,6 +210,24 @@ class SignalBot:
                 result = self.trading_service.execute_order(order)
                 self.logger.info(f"Order executed successfully: {result}")
 
+                # Track position if order has multiple TPs
+                if order.take_profits and len(order.take_profits) > 1:
+                    position_id = str(result.get('order_id') or result.get('deal_id'))
+                    actual_entry = result.get('price', order.price)
+                    
+                    self.position_manager.add_position(
+                        position_id=position_id,
+                        order=order,
+                        actual_entry_price=actual_entry
+                    )
+                    
+                    self.logger.info(
+                        f"Position {position_id} tracked with {len(order.take_profits)} TP levels"
+                    )
+                    
+                    # Start monitoring this position
+                    asyncio.create_task(self.monitor_position(position_id))
+
                 # Update account info for risk management
                 account_info = self.trading_service.get_account_info()
                 if account_info:
@@ -215,6 +235,84 @@ class SignalBot:
 
             except Exception as e:
                 self.logger.error(f"Failed to execute order: {e}", exc_info=True)
+
+        except Exception as e:
+            self.logger.error(f"Error handling signal message: {e}", exc_info=True)
+
+    async def monitor_position(self, position_id: str) -> None:
+        """
+        Monitor a position and manage partial closes at TP levels.
+        
+        Args:
+            position_id: Position identifier
+        """
+        try:
+            managed_pos = self.position_manager.get_position(position_id)
+            if not managed_pos:
+                return
+            
+            self.logger.info(f"Started monitoring position {position_id}")
+            
+            # Check price every 5 seconds
+            while managed_pos:
+                await asyncio.sleep(5)
+                
+                # Re-fetch in case position was closed
+                managed_pos = self.position_manager.get_position(position_id)
+                if not managed_pos:
+                    self.logger.info(f"Position {position_id} no longer tracked")
+                    break
+                
+                # Get current price
+                current_price = self.trading_service.get_current_price(managed_pos.symbol)
+                if current_price is None:
+                    continue
+                
+                # Check if any TP levels hit
+                actions = self.position_manager.check_tp_hits(position_id, current_price)
+                
+                for tp_level, tp_price, volume_to_close, new_sl in actions:
+                    self.logger.info(
+                        f"🎯 TP{tp_level + 1} hit at {tp_price:.5f} for {position_id}"
+                    )
+                    
+                    # Close partial position
+                    success = self.trading_service.close_position_partial(
+                        position_id, 
+                        volume_to_close
+                    )
+                    
+                    if success:
+                        self.logger.info(
+                            f"✅ Closed {volume_to_close:.2f} lots at TP{tp_level + 1}"
+                        )
+                        
+                        # Update stop loss if specified
+                        if new_sl is not None:
+                            sl_success = self.trading_service.modify_position_sl(
+                                position_id,
+                                new_sl
+                            )
+                            if sl_success:
+                                action_desc = "break-even" if tp_level == 0 else f"TP{tp_level}"
+                                self.logger.info(
+                                    f"✅ Moved SL to {action_desc} ({new_sl:.5f})"
+                                )
+                        
+                        # Update position manager
+                        self.position_manager.update_after_partial_close(
+                            position_id,
+                            tp_level,
+                            volume_to_close,
+                            new_sl
+                        )
+                    else:
+                        self.logger.error(
+                            f"❌ Failed to close {volume_to_close:.2f} lots at TP{tp_level + 1}"
+                        )
+                
+        except Exception as e:
+            self.logger.error(f"Error monitoring position {position_id}: {e}", exc_info=True)
 
         except Exception as e:
             self.logger.error(f"Error handling signal message: {e}", exc_info=True)

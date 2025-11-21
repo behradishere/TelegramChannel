@@ -117,6 +117,48 @@ class TradingService:
 
         return self.backend.get_current_price(symbol)
 
+    def close_position_partial(self, position_id: str, volume: float) -> bool:
+        """
+        Close part of a position.
+        
+        Args:
+            position_id: Position identifier
+            volume: Volume to close
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.backend is None:
+            logger.warning("No trading backend available")
+            return False
+        
+        if hasattr(self.backend, 'close_position_partial'):
+            return self.backend.close_position_partial(position_id, volume)
+        else:
+            logger.warning("Backend does not support partial close")
+            return False
+    
+    def modify_position_sl(self, position_id: str, new_sl: float) -> bool:
+        """
+        Modify the stop loss of a position.
+        
+        Args:
+            position_id: Position identifier
+            new_sl: New stop loss price
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.backend is None:
+            logger.warning("No trading backend available")
+            return False
+        
+        if hasattr(self.backend, 'modify_position_sl'):
+            return self.backend.modify_position_sl(position_id, new_sl)
+        else:
+            logger.warning("Backend does not support SL modification")
+            return False
+
     def is_backend_available(self) -> bool:
         """Check if trading backend is available and ready."""
         return self.backend is not None and self.backend.is_available()

@@ -98,148 +98,86 @@ class MT5Backend(TradingBackend):
         except Exception as e:
             logger.warning(f"Error shutting down MT5: {e}")
 
-    def _validate_and_adjust_stops(
+    def _validate_stops(
         self, 
         symbol: str, 
         order_type: int,
         price: float, 
         stop_loss: Optional[float], 
         take_profit: Optional[float]
-    ) -> tuple:
+    ) -> bool:
         """
-        Validate and adjust stop loss and take profit levels to meet MT5 requirements.
+        Validate stop loss and take profit levels without adjusting them.
+        Logs errors if stops are invalid but returns the original values.
         
         Args:
             symbol: Symbol name
             order_type: MT5 order type (BUY or SELL)
             price: Entry price
-            stop_loss: Requested stop loss price
-            take_profit: Requested take profit price
+            stop_loss: Stop loss price
+            take_profit: Take profit price
             
         Returns:
-            Tuple of (adjusted_sl, adjusted_tp)
+            True if valid, False if invalid (but doesn't modify values)
         """
         mt5 = self._mt5
         sym_info = mt5.symbol_info(symbol)
         
         if sym_info is None:
-            logger.warning(f"Could not get symbol info for {symbol}, returning original stops")
-            return stop_loss, take_profit
+            logger.warning(f"Could not get symbol info for {symbol}")
+            return True  # Can't validate, assume OK
         
-        # First, validate that stops are on the correct side of price
         is_buy = order_type == mt5.ORDER_TYPE_BUY
+        is_valid = True
         
+        # Validate that stops are on the correct side of price
         if stop_loss is not None:
-            # For BUY: SL must be below entry
-            # For SELL: SL must be above entry
             if is_buy and stop_loss >= price:
-                logger.warning(
-                    f"Invalid SL for BUY: {stop_loss} >= {price}. "
-                    "SL must be below entry. Swapping with TP if available."
+                logger.error(
+                    f"❌ Invalid SL for BUY: SL={stop_loss:.5f} must be BELOW entry={price:.5f}"
                 )
-                # If TP looks like it should be SL, swap them
-                if take_profit is not None and take_profit < price:
-                    logger.info(f"Swapping SL ({stop_loss}) and TP ({take_profit})")
-                    stop_loss, take_profit = take_profit, stop_loss
-                else:
-                    # Set SL to a reasonable default (1% below)
-                    stop_loss = price * 0.99
-                    logger.warning(f"Setting SL to default: {stop_loss}")
-                    
+                is_valid = False
             elif not is_buy and stop_loss <= price:
-                logger.warning(
-                    f"Invalid SL for SELL: {stop_loss} <= {price}. "
-                    "SL must be above entry. Swapping with TP if available."
+                logger.error(
+                    f"❌ Invalid SL for SELL: SL={stop_loss:.5f} must be ABOVE entry={price:.5f}"
                 )
-                # If TP looks like it should be SL, swap them
-                if take_profit is not None and take_profit > price:
-                    logger.info(f"Swapping SL ({stop_loss}) and TP ({take_profit})")
-                    stop_loss, take_profit = take_profit, stop_loss
-                else:
-                    # Set SL to a reasonable default (1% above)
-                    stop_loss = price * 1.01
-                    logger.warning(f"Setting SL to default: {stop_loss}")
+                is_valid = False
         
         if take_profit is not None:
-            # For BUY: TP must be above entry
-            # For SELL: TP must be below entry
             if is_buy and take_profit <= price:
-                logger.warning(
-                    f"Invalid TP for BUY: {take_profit} <= {price}. "
-                    "TP must be above entry. Setting to reasonable default."
+                logger.error(
+                    f"❌ Invalid TP for BUY: TP={take_profit:.5f} must be ABOVE entry={price:.5f}"
                 )
-                take_profit = price * 1.01  # 1% above
-                
+                is_valid = False
             elif not is_buy and take_profit >= price:
-                logger.warning(
-                    f"Invalid TP for SELL: {take_profit} >= {price}. "
-                    "TP must be below entry. Setting to reasonable default."
+                logger.error(
+                    f"❌ Invalid TP for SELL: TP={take_profit:.5f} must be BELOW entry={price:.5f}"
                 )
-                take_profit = price * 0.99  # 1% below
+                is_valid = False
         
-        # Get minimum stop level (in points)
+        # Check minimum distance if broker enforces it
         stops_level = sym_info.trade_stops_level
         point = sym_info.point
-        
-        # Minimum distance in price units
         min_distance = stops_level * point
         
-        # If stops_level is 0, broker doesn't enforce minimum distance
-        if stops_level == 0:
-            logger.debug(f"No minimum stop level for {symbol}")
-            return stop_loss, take_profit
-        
-        logger.debug(
-            f"Symbol {symbol}: stops_level={stops_level} points, "
-            f"min_distance={min_distance:.5f}, point={point}"
-        )
-        
-        adjusted_sl = stop_loss
-        adjusted_tp = take_profit
-        
-        # Validate and adjust stop loss
-        if stop_loss is not None:
-            if is_buy:
-                # For BUY: SL must be below price by at least min_distance
-                min_sl = price - min_distance
-                if stop_loss > min_sl:
+        if stops_level > 0:
+            if stop_loss is not None:
+                actual_distance = abs(price - stop_loss)
+                if actual_distance < min_distance:
                     logger.warning(
-                        f"Stop loss {stop_loss:.5f} too close to price {price:.5f}. "
-                        f"Adjusting to {min_sl:.5f} (min distance: {min_distance:.5f})"
+                        f"⚠️  SL too close: distance={actual_distance:.5f}, "
+                        f"minimum={min_distance:.5f} ({stops_level} points)"
                     )
-                    adjusted_sl = min_sl
-            else:
-                # For SELL: SL must be above price by at least min_distance
-                min_sl = price + min_distance
-                if stop_loss < min_sl:
+            
+            if take_profit is not None:
+                actual_distance = abs(price - take_profit)
+                if actual_distance < min_distance:
                     logger.warning(
-                        f"Stop loss {stop_loss:.5f} too close to price {price:.5f}. "
-                        f"Adjusting to {min_sl:.5f} (min distance: {min_distance:.5f})"
+                        f"⚠️  TP too close: distance={actual_distance:.5f}, "
+                        f"minimum={min_distance:.5f} ({stops_level} points)"
                     )
-                    adjusted_sl = min_sl
         
-        # Validate and adjust take profit
-        if take_profit is not None:
-            if is_buy:
-                # For BUY: TP must be above price by at least min_distance
-                min_tp = price + min_distance
-                if take_profit < min_tp:
-                    logger.warning(
-                        f"Take profit {take_profit:.5f} too close to price {price:.5f}. "
-                        f"Adjusting to {min_tp:.5f} (min distance: {min_distance:.5f})"
-                    )
-                    adjusted_tp = min_tp
-            else:
-                # For SELL: TP must be below price by at least min_distance
-                min_tp = price - min_distance
-                if take_profit > min_tp:
-                    logger.warning(
-                        f"Take profit {take_profit:.5f} too close to price {price:.5f}. "
-                        f"Adjusting to {min_tp:.5f} (min distance: {min_distance:.5f})"
-                    )
-                    adjusted_tp = min_tp
-        
-        return adjusted_sl, adjusted_tp
+        return is_valid
 
     def place_order(self, order: Order) -> dict:
         """
@@ -319,24 +257,30 @@ class MT5Backend(TradingBackend):
         else:
             logger.debug(f"Using filling mode {filling_mode} for {symbol}")
 
-        # Validate and adjust stop loss and take profit levels
+        # Validate stops - use only first TP for initial order
+        # We'll manage multiple TPs through position manager
         sl = order.stop_loss
         tp = order.take_profits[0] if order.take_profits else None
         
         logger.info(
-            f"Original stops - Entry: {price:.5f}, SL: {sl}, TP: {tp}, "
-            f"Side: {order.side.value.upper()}"
+            f"Order details - Entry: {price:.5f}, SL: {sl}, "
+            f"All TPs: {order.take_profits}, Side: {order.side.value.upper()}"
         )
         
+        # Validate without adjusting
         if sl is not None or tp is not None:
-            sl, tp = self._validate_and_adjust_stops(
-                symbol, 
-                mt5_type, 
-                price, 
-                sl, 
-                tp
-            )
-            logger.info(f"Adjusted stops - SL: {sl}, TP: {tp}")
+            is_valid = self._validate_stops(symbol, mt5_type, price, sl, tp)
+            if not is_valid:
+                logger.error(
+                    "❌ Stop levels are invalid. Order will NOT be placed. "
+                    "Please fix the signal format."
+                )
+                raise ValueError(
+                    "Invalid stop levels: stops must be on correct side of entry price. "
+                    f"For {order.side.value.upper()}: "
+                    f"SL={'below' if order.side == TradeSide.BUY else 'above'} entry, "
+                    f"TP={'above' if order.side == TradeSide.BUY else 'below'} entry"
+                )
 
         # Build trade request
         request = {
@@ -352,11 +296,11 @@ class MT5Backend(TradingBackend):
             "type_filling": filling_mode,
         }
 
-        # Add stop loss
+        # Add stop loss if valid
         if sl is not None:
             request["sl"] = float(sl)
 
-        # Add take profit
+        # Add take profit if valid (only first one)
         if tp is not None:
             request["tp"] = float(tp)
 
@@ -526,6 +470,151 @@ class MT5Backend(TradingBackend):
 
         except Exception as e:
             logger.error(f"Error closing position {position_id}: {e}")
+            return False
+
+    def close_position_partial(
+        self, 
+        position_id: str, 
+        volume: float
+    ) -> bool:
+        """
+        Close part of a position in MT5.
+        
+        Args:
+            position_id: Position ticket number
+            volume: Volume to close (partial)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._initialized or not self._mt5:
+            logger.error("MT5 backend not initialized")
+            return False
+
+        try:
+            ticket = int(position_id)
+            mt5 = self._mt5
+
+            # Get position info
+            position = mt5.positions_get(ticket=ticket)
+            if not position:
+                logger.error(f"Position {position_id} not found")
+                return False
+
+            pos = position[0]
+
+            # Validate volume
+            if volume > pos.volume:
+                logger.error(
+                    f"Cannot close {volume} lots, position only has {pos.volume} lots"
+                )
+                return False
+
+            # Determine closing type (opposite of opening)
+            close_type = mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY
+
+            # Get current price
+            tick = mt5.symbol_info_tick(pos.symbol)
+            if tick is None:
+                logger.error(f"Failed to get tick for {pos.symbol}")
+                return False
+
+            close_price = tick.bid if pos.type == 0 else tick.ask
+
+            # Get filling mode
+            symbol_cache = get_symbol_cache()
+            filling_mode = symbol_cache.get_best_filling_mode(
+                pos.symbol,
+                preferred_mode=mt5.ORDER_FILLING_IOC
+            )
+            
+            if filling_mode is None:
+                filling_mode = mt5.ORDER_FILLING_IOC
+
+            # Partial close request
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": pos.symbol,
+                "volume": volume,  # Partial volume
+                "type": close_type,
+                "position": ticket,
+                "price": close_price,
+                "deviation": 20,
+                "magic": 234000,
+                "comment": f"Partial close ({volume} lots)",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling_mode,
+            }
+
+            result = mt5.order_send(request)
+
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                error = result.comment if result else mt5.last_error()
+                logger.error(f"Failed to partially close position {position_id}: {error}")
+                return False
+
+            logger.info(
+                f"Partially closed {volume} lots of position {position_id} "
+                f"(remaining: {pos.volume - volume})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error partially closing position {position_id}: {e}")
+            return False
+
+    def modify_position_sl(
+        self, 
+        position_id: str, 
+        new_sl: float
+    ) -> bool:
+        """
+        Modify the stop loss of an existing position.
+        
+        Args:
+            position_id: Position ticket number
+            new_sl: New stop loss price
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._initialized or not self._mt5:
+            logger.error("MT5 backend not initialized")
+            return False
+
+        try:
+            ticket = int(position_id)
+            mt5 = self._mt5
+
+            # Get position info
+            position = mt5.positions_get(ticket=ticket)
+            if not position:
+                logger.error(f"Position {position_id} not found")
+                return False
+
+            pos = position[0]
+
+            # Modification request
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "position": ticket,
+                "symbol": pos.symbol,
+                "sl": float(new_sl),
+                "tp": pos.tp,  # Keep existing TP
+            }
+
+            result = mt5.order_send(request)
+
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                error = result.comment if result else mt5.last_error()
+                logger.error(f"Failed to modify SL for position {position_id}: {error}")
+                return False
+
+            logger.info(f"Modified SL for position {position_id} to {new_sl:.5f}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error modifying SL for position {position_id}: {e}")
             return False
 
     def get_current_price(self, symbol: str) -> Optional[float]:
